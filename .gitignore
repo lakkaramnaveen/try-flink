@@ -2,3 +2,4 @@
 .traffic-metrics.bin
 __pycache__/
 sql/_bench.sql
+.flink-sql.log
