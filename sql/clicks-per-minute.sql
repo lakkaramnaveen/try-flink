@@ -2,10 +2,10 @@
 SET 'sql-client.execution.result-mode' = 'tableau';
 SET 'pipeline.name' = 'clicks-per-minute';
 
--- Buffer records to reduce aggregation overhead (these do not configure slots).
-SET 'table.exec.mini-batch.enabled' = 'true';
-SET 'table.exec.mini-batch.allow-latency' = '5s';
-SET 'table.exec.mini-batch.size' = '5000';
+-- Mini-batch was removed: it only applies to unbounded GROUP BY aggregates, not TUMBLE windows, and benchmarked no faster.
+-- At slow sim speeds some of the 4 partitions can go quiet, which would hold back the watermark and stall every window.
+-- Treat a partition with no data for 5s as idle so the others keep making progress.
+SET 'table.exec.source.idle-timeout' = '5s';
 
 CREATE TABLE youtube_inbound_stream (
     videoid STRING,

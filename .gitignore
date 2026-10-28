@@ -1,3 +1,4 @@
 .simulation-control.json
 .traffic-metrics.bin
 __pycache__/
+sql/_bench.sql

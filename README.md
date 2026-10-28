@@ -58,6 +58,28 @@ View Kafka's web dashboard: http://localhost:8080/overview
 
 The traffic chart is available within the control panel: http://localhost:5000.
 
+# How to benchmark / tune Flink
+The simulated day is only 100k clicks, so it can't stress Flink.  Instead, load a big backlog and time how fast Flink drains it:
+
+```sh
+docker compose exec kafka rpk topic create bench-clicks -p 4 -r 1
+python3 bench/bulk-load.py bench-clicks 200   # 20M events
+bench/bench.sh p1 1 legacy
+bench/bench.sh p4 4 legacy
+```
+
+Extra `SET` lines can be passed after the query type to try other settings.  Results on a 14 core laptop, 20M events:
+
+| Setup | Throughput |
+| --- | --- |
+| parallelism 1, TUMBLE group window, mini-batch on | ~600k rec/s |
+| parallelism 1, window TVF | ~500k rec/s |
+| parallelism 4, TUMBLE group window, mini-batch on or off | ~1.5M rec/s |
+| parallelism 4, window TVF | ~1.3M rec/s (~1.5M with `pipeline.object-reuse`) |
+| parallelism 8 (topic only has 4 partitions) | ~1.6M rec/s |
+
+Takeaways: parallelism matching the partition count is the big win; mini-batch doesn't affect window aggregates; going past the partition count barely helps because the Kafka source is capped at one reader per partition.
+
 # How to run the tests
  - `python3 -m unittest test_traffic_metrics test_simulation_clock test_simulator_producer`
  - `node test_traffic_chart.cjs`

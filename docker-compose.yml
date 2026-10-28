@@ -22,6 +22,8 @@ services:
         FLINK_PROPERTIES=
         jobmanager.rpc.address: jobmanager
         cluster.registration.timeout: 5 min
+        # Match the youtube-clicks partition count.  Benchmarked ~2.5x the throughput of parallelism 1 (see bench/).
+        parallelism.default: 4
 
   taskmanager:
     image: flink:1.18.1-scala_2.12
@@ -37,7 +39,7 @@ services:
       - |
         FLINK_PROPERTIES=
         jobmanager.rpc.address: jobmanager
-        taskmanager.numberOfTaskSlots: 100
+        taskmanager.numberOfTaskSlots: 8  # Each slot splits the TaskManager's memory, so 100 slots left each one ~5MB of managed memory.
         cluster.registration.timeout: 5 min
 
   kafka:
@@ -71,7 +73,7 @@ services:
     command:
       - |
         if ! rpk topic describe youtube-clicks --brokers kafka:9092 >/dev/null 2>&1; then
-          rpk topic create youtube-clicks --partitions 1 --replicas 1 --brokers kafka:9092
+          rpk topic create youtube-clicks --partitions 4 --replicas 1 --brokers kafka:9092
         fi
         rpk topic describe youtube-clicks --brokers kafka:9092
 
