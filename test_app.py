@@ -1,6 +1,7 @@
 """Control panel API checks with Docker, Flink, and the simulator replaced by fakes."""
 
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -73,6 +74,11 @@ class AppTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 400)
                 self.assertIn("error", response.json)
         self.assertEqual(self.client.post("/api/speed", data="not json").status_code, 400)
+
+    def test_speed_picker_offers_exactly_the_allowed_speeds(self):
+        html = (Path(app.__file__).parent / "control-panel.html").read_text()
+        options = tuple(int(value) for value in re.findall(r'<option value="(\d+)"', html))
+        self.assertEqual(options, app.SPEEDS)
 
     def test_speed_and_pause_are_saved_for_the_simulator(self):
         self.assertEqual(self.client.post("/api/speed", json={"speed": 1000}).json["speed"], 1000)

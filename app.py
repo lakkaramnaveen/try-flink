@@ -1,7 +1,7 @@
 """Local control panel for the Flink/Kafka click-stream playground.
 
 Starts and stops the Docker stack, submits the Flink SQL job, runs the traffic simulator,
-and serves the dashboard at http://localhost:5000.  See docs/architecture.md.
+and serves the dashboard at http://localhost:5050.  See docs/architecture.md.
 """
 
 from __future__ import annotations
@@ -28,6 +28,8 @@ METRICS_FILE = ROOT / ".traffic-metrics.bin"
 SQL_LOG_FILE = ROOT / ".flink-sql.log"
 SQL_FILE = "/opt/flink/sql/clicks-per-minute.sql"
 FLINK_URL = os.environ.get("FLINK_URL", "http://127.0.0.1:8081")
+# Not 5000: macOS AirPlay Receiver listens there on all interfaces, so http://localhost:5000 reaches it instead.
+PORT = int(os.environ.get("PORT", 5050))
 # Keep in sync with the <select id="speed"> options in control-panel.html.
 SPEEDS = (1, 60, 120, 1000, 5000, 10000)
 app = Flask(__name__)
@@ -264,4 +266,4 @@ if __name__ == "__main__":
     atexit.register(stop_stack)
     # atexit doesn't run on SIGTERM by default, so turn it into a normal exit.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-    app.run(host="127.0.0.1", port=5000, debug=False)
+    app.run(host="127.0.0.1", port=PORT, debug=False)

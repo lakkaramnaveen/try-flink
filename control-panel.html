@@ -4,46 +4,41 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Flink playground</title>
-  <style>
-    :root { color-scheme: light; --ink: #252a2d; --muted: #7d8588; --line: #d9dfe0; --blue: #dceeff; --blue-ink: #47719b; --rose: #ffe3e3; --rose-ink: #a96565; --lavender: #eee8ff; --lavender-ink: #7464a2; }
-    * { box-sizing: border-box; } body { margin: 0; min-height: 100vh; background: #fff; color: var(--ink); font: 15px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    main { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px 20px 52px; }
-    .controls { display: flex; align-items: center; gap: 22px; } button { border: 0; cursor: pointer; font: inherit; transition: transform .12s ease, filter .12s ease; } button:hover { filter: brightness(.97); transform: translateY(-1px); } button:active { transform: translateY(1px); } button:disabled { opacity: .45; cursor: wait; transform: none; }
-    .control { width: 104px; height: 104px; border-radius: 22px; display: grid; place-items: center; } .play { background: var(--blue); color: var(--blue-ink); } .stop { background: var(--rose); color: var(--rose-ink); } .restart { background: var(--lavender); color: var(--lavender-ink); }
-    .icon { display: block; position: relative; width: 42px; height: 42px; } .play-icon { width: 0; height: 0; border-top: 20px solid transparent; border-bottom: 20px solid transparent; border-left: 29px solid currentColor; margin-left: 7px; } .pause-icon::before, .pause-icon::after { content: ""; position: absolute; top: 3px; width: 9px; height: 36px; border-radius: 2px; background: currentColor; } .pause-icon::before { left: 8px; } .pause-icon::after { right: 8px; } .stop-icon { width: 33px; height: 33px; border-radius: 4px; background: currentColor; } .restart-icon { width: 45px; height: 45px; display: block; transform: rotate(90deg); }
-    .speed-wrap { margin-top: 42px; position: relative; } select { appearance: none; width: 272px; height: 72px; border: 2px solid #aeb5b7; border-radius: 18px; padding: 0 60px 0 28px; background: #fff; color: var(--ink); font: 28px/1 system-ui, sans-serif; text-align: center; text-align-last: center; cursor: pointer; } .chevron { pointer-events: none; position: absolute; right: 26px; top: 25px; width: 18px; height: 18px; border-right: 2px solid #71787b; border-bottom: 2px solid #71787b; transform: rotate(45deg); }
-    .status { display: flex; align-items: center; gap: 9px; margin-top: 30px; color: var(--muted); font-size: 14px; } .dot { width: 9px; height: 9px; border-radius: 50%; background: #e48b8b; } .dot.live { background: #72bd8c; } .dot.paused { background: #e2b66f; }
-    .toast { position: fixed; right: 20px; bottom: 20px; max-width: calc(100vw - 40px); padding: 11px 15px; border: 1px solid var(--line); border-radius: 10px; background: #fff; color: var(--muted); box-shadow: 0 8px 25px #26343b16; opacity: 0; transform: translateY(8px); transition: .2s; } .toast.show { opacity: 1; transform: none; }
-    .traffic { width: min(860px, 100%); margin-top: 48px; } .traffic-heading { display: flex; align-items: baseline; gap: 12px; color: var(--muted); } .traffic-heading strong { color: var(--ink); font-size: 24px; font-weight: 600; } .traffic-heading span { font-size: 14px; } .chart { display: block; width: 100%; height: 260px; margin-top: 12px; border: 1px solid var(--line); border-radius: 12px; background: #fcfdfd; } .legend { display: flex; gap: 18px; margin-top: 9px; color: var(--muted); font-size: 13px; } .legend span::before { content: ""; display: inline-block; width: 18px; height: 3px; margin: 0 6px 3px 0; border-radius: 2px; background: currentColor; } .legend .expected { color: #7464a2; } .legend .acked { color: #47719b; } .legend .attempted { color: #a96565; }
-    @media (max-width: 560px) { .controls { gap: 12px; } .control { width: 84px; height: 84px; border-radius: 18px; } .play-icon { border-top-width: 16px; border-bottom-width: 16px; border-left-width: 23px; } .pause-icon::before, .pause-icon::after { height: 30px; top: 6px; } .stop-icon { width: 28px; height: 28px; } .restart-icon { transform: scale(.85) rotate(90deg); } }
-  </style>
+  <link rel="stylesheet" href="/static/control-panel.css">
 </head>
 <body>
   <main>
-    <div class="controls" aria-label="Simulation controls"><button id="play" class="control play" aria-label="Start everything"><span id="play-icon" class="icon play-icon"></span></button><button id="stop" class="control stop" aria-label="Stop everything"><span class="icon stop-icon"></span></button><button id="restart" class="control restart" aria-label="Restart everything"><svg class="restart-icon" viewBox="0 0 512 512" aria-hidden="true"><path d="M48.5 224H40c-13.3 0-24-10.7-24-24V72c0-9.7 5.8-18.5 14.8-22.2s19.3-1.7 26.2 5.2L98.6 96.6c87.6-86.5 228.7-86.2 315.8 1 87.5 87.5 87.5 229.3 0 316.8s-229.3 87.5-316.8 0c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0c62.5 62.5 163.8 62.5 226.3 0s62.5-163.8 0-226.3c-62.2-62.2-162.7-62.5-225.3-1L185 183c6.9 6.9 8.9 17.2 5.2 26.2s-12.5 14.8-22.2 14.8H48.5z" fill="currentColor"/></svg></button></div>
-    <div class="speed-wrap"><label for="speed" hidden>Simulated time speed</label><select id="speed" aria-label="Simulated time speed"><option value="1">1×</option><option value="60">60×</option><option value="120" selected>120×</option><option value="1000">1000×</option><option value="5000">5000×</option><option value="10000">10000×</option></select><span class="chevron"></span></div>
-    <div class="status"><span id="dot" class="dot"></span><span id="message">Checking status…</span></div>
-    <section class="traffic" aria-label="Kafka traffic"><div class="traffic-heading"><strong id="current-rps">0 RPS</strong><span>Kafka delivery rate · last 15 minutes</span></div><canvas id="traffic-chart" class="chart" height="260"></canvas><div class="legend"><span class="expected">Expected RPS</span><span class="attempted">Attempted RPS</span><span class="acked">Acknowledged RPS</span></div></section>
-  </main><div id="toast" class="toast" role="status"></div>
-  <script type="module">
-    import {decodeTraffic} from '/static/traffic-metrics.mjs';
+    <div class="controls" aria-label="Simulation controls">
+      <button id="play" class="control play" aria-label="Start everything"><span id="play-icon" class="icon play-icon"></span></button>
+      <button id="stop" class="control stop" aria-label="Stop everything"><span class="icon stop-icon"></span></button>
+      <button id="restart" class="control restart" aria-label="Restart everything">
+        <svg class="restart-icon" viewBox="0 0 512 512" aria-hidden="true"><path d="M48.5 224H40c-13.3 0-24-10.7-24-24V72c0-9.7 5.8-18.5 14.8-22.2s19.3-1.7 26.2 5.2L98.6 96.6c87.6-86.5 228.7-86.2 315.8 1 87.5 87.5 87.5 229.3 0 316.8s-229.3 87.5-316.8 0c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0c62.5 62.5 163.8 62.5 226.3 0s62.5-163.8 0-226.3c-62.2-62.2-162.7-62.5-225.3-1L185 183c6.9 6.9 8.9 17.2 5.2 26.2s-12.5 14.8-22.2 14.8H48.5z" fill="currentColor"/></svg>
+      </button>
+    </div>
 
-    const $ = selector => document.querySelector(selector);
-    const toast = message => { const element = $('#toast'); element.textContent = message; element.classList.add('show'); setTimeout(() => element.classList.remove('show'), 2600); };
-    async function getStatus() { const response = await fetch('/api/status'); return response.json(); }
-    async function getTraffic() {
-      const response = await fetch('/api/traffic', {cache: 'no-store'});
-      if (!response.ok) throw Error('Could not read traffic samples');
-      return decodeTraffic(await response.arrayBuffer());
-    }
-    async function call(path, body) { const response = await fetch(path, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {}) }); const data = await response.json(); if (!response.ok) throw Error(data.error || data.message || 'Request failed'); update(data); return data; }
-    function update(status) { $('#message').textContent = status.message; $('#dot').className = 'dot ' + (status.running ? (status.paused ? 'paused' : 'live') : ''); $('#speed').value = status.speed; const icon = $('#play-icon'); icon.className = 'icon ' + (status.running && !status.paused ? 'pause-icon' : 'play-icon'); $('#play').setAttribute('aria-label', status.running && !status.paused ? 'Pause traffic' : status.running ? 'Resume traffic' : 'Start everything'); }
-    function drawTraffic(samples) { const canvas = $('#traffic-chart'), rect = canvas.getBoundingClientRect(), ratio = window.devicePixelRatio || 1, width = Math.max(rect.width, 320), height = 260; canvas.width = width * ratio; canvas.height = height * ratio; const ctx = canvas.getContext('2d'); ctx.scale(ratio, ratio); ctx.clearRect(0, 0, width, height); const left = 42, right = 14, top = 18, bottom = 28, plotW = width - left - right, plotH = height - top - bottom; const visible = samples.slice(-900); const value = (sample, key) => Number(sample[key] || 0); const max = Math.max(1, ...visible.map(sample => Math.max(value(sample, 'expected'), value(sample, 'acked'), value(sample, 'attempted')))); ctx.strokeStyle = '#e7ecec'; ctx.fillStyle = '#7d8588'; ctx.font = '12px system-ui'; ctx.textAlign = 'right'; for (let i = 0; i <= 3; i++) { const y = top + plotH * i / 3; ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(width - right, y); ctx.stroke(); ctx.fillText(Math.round(max * (3 - i) / 3), left - 8, y + 4); } const line = (key, color) => { if (!visible.length) return; ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath(); visible.forEach((sample, index) => { const x = left + (visible.length === 1 ? plotW / 2 : plotW * index / (visible.length - 1)); const y = top + plotH * (1 - value(sample, key) / max); index ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke(); }; line('expected', '#7464a2'); line('acked', '#47719b'); line('attempted', '#a96565'); const recent = visible.slice(-10); const rps = recent.length ? Math.round(recent.reduce((sum, sample) => sum + value(sample, 'acked'), 0) / recent.length) : 0; $('#current-rps').textContent = `${rps} RPS`; }
-    $('#play').addEventListener('click', async () => { $('#play').disabled = true; try { const status = await getStatus(); await call(status.running ? '/api/traffic' : '/api/start', status.running ? {paused: !status.paused} : {}); } catch (error) { toast(error.message); } finally { $('#play').disabled = false; } });
-    $('#stop').addEventListener('click', async () => { $('#stop').disabled = true; try { await call('/api/stop'); toast('Stopped'); } catch (error) { toast(error.message); } finally { $('#stop').disabled = false; } });
-    $('#restart').addEventListener('click', async () => { $('#restart').disabled = true; try { await call('/api/restart'); toast('Restarted'); } catch (error) { toast(error.message); } finally { $('#restart').disabled = false; } });
-    $('#speed').addEventListener('change', async event => { try { await call('/api/speed', {speed: Number(event.target.value)}); } catch (error) { toast(error.message); } });
-    async function refresh() { try { update(await getStatus()); drawTraffic(await getTraffic()); } catch (_) { $('#message').textContent = 'Backend unavailable'; $('#dot').className = 'dot'; } } refresh(); setInterval(refresh, 2000); window.addEventListener('resize', async () => { try { drawTraffic(await getTraffic()); } catch (error) { toast(error.message); } });
-  </script>
+    <!-- Keep the options in sync with SPEEDS in app.py. -->
+    <div class="speed-wrap">
+      <select id="speed" aria-label="Simulated time speed">
+        <option value="1">1×</option>
+        <option value="60">60×</option>
+        <option value="120" selected>120×</option>
+        <option value="1000">1000×</option>
+        <option value="5000">5000×</option>
+        <option value="10000">10000×</option>
+      </select>
+      <span class="chevron"></span>
+    </div>
+
+    <div class="status"><span id="dot" class="dot"></span><span id="message">Checking status…</span></div>
+    <div id="flink" class="flink" aria-live="polite"></div>
+
+    <section class="traffic" aria-label="Kafka traffic">
+      <div class="traffic-heading"><strong id="current-rps">0 RPS</strong><span>Kafka delivery rate · last 15 minutes</span></div>
+      <canvas id="traffic-chart" class="chart" height="260"></canvas>
+      <div class="legend"><span class="expected">Expected RPS</span><span class="attempted">Attempted RPS</span><span class="acked">Acknowledged RPS</span></div>
+    </section>
+  </main>
+  <div id="toast" class="toast" role="status"></div>
+  <script type="module" src="/static/control-panel.mjs"></script>
 </body>
 </html>
