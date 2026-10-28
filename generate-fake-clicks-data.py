@@ -1,21 +1,27 @@
-import csv
-import numpy as np
-from datetime import datetime, timedelta
+"""Generate youtube-clicks.csv: one simulated day of clicks with the columns videoid and timestamp.
 
-"""
 Design:
 To simulate human activity, we model two layers:
 
  - Video Popularity (Zipf's Law): A tiny fraction of videos (the "viral" hits) get the vast majority of clicks, while a massive tail of videos gets almost none.
 
- - Time-of-Day Traffic (Sine Wave + Noise): Clicks peak during the evening and bottom out in the early morning hours, layered with random Poisson noise to mimic real network jitter.
+ - Time-of-Day Traffic (Sine Wave + Noise): Clicks peak during the evening and bottom out in the early morning hours, with each click sampled at random so the curve is noisy like real traffic.
 
 """
+
+import csv
+from datetime import datetime, timedelta
+
+import numpy as np
 
 # Configuration
 NUM_EVENTS = 100000
 NUM_VIDEOS = 500  # Total pool of video IDs
 ZIPF_ALPHA = 1.2  # Higher = more concentrated on top videos
+SEED = 2026  # Fixed so regenerating gives the same file.  Change it for a different day of traffic.
+OUTPUT_FILE = 'youtube-clicks.csv'
+
+np.random.seed(SEED)
 
 # 1. Generate Video IDs based on Zipf distribution
 video_pool = [f"vid_{i:04d}" for i in range(1, NUM_VIDEOS + 1)]
@@ -45,11 +51,11 @@ while len(timestamps) < NUM_EVENTS:
 timestamps.sort()
 
 # 3. Write out to a simple CSV file
-with open('youtube-clicks.csv', 'w', newline='') as f:
+with open(OUTPUT_FILE, 'w', newline='') as f:
     writer = csv.writer(f)
     writer.writerow(['videoid', 'timestamp'])
     for vid, ts in zip(chosen_videos, timestamps):
         writer.writerow([vid, ts])
 
-print("youtube_clicks.csv successfully generated!")
+print(f"{OUTPUT_FILE} successfully generated!")
 

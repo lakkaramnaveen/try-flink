@@ -2,11 +2,11 @@
 
 usage: python3 bench/bulk-load.py <topic> <days>
 """
-import csv, json, sys
+import csv, json, os, sys
 from datetime import datetime, timedelta
 from confluent_kafka import Producer
 topic, days = sys.argv[1], int(sys.argv[2])
-p = Producer({'bootstrap.servers': '127.0.0.1:19092', 'linger.ms': 20, 'batch.size': 1_000_000,
+p = Producer({'bootstrap.servers': os.environ.get('KAFKA_BOOTSTRAP_SERVERS', '127.0.0.1:19092'), 'linger.ms': 20, 'batch.size': 1_000_000,
               'compression.type': 'lz4', 'queue.buffering.max.messages': 1_000_000, 'acks': 1})
 rows = list(csv.reader(open('youtube-clicks.csv')))[1:]
 n = 0
