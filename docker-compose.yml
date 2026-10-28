@@ -1,6 +1,7 @@
 services:
   jobmanager:
-    image: flink:1.18.1-scala_2.12
+    build: ./flink
+    image: try-flink/flink:1.18.1
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -8,15 +9,7 @@ services:
       - ./sql:/opt/flink/sql:ro
     ports:
       - "8081:8081"
-    # Download the kafka connector into flink's lib directory at startup.  The connector version has to match the flink version.
-        # I went to maven.org and searched until I found the JARs here with their release dates: https://central.sonatype.com/artifact/org.apache.flink/flink-sql-connector-kafka/versions
-        # Clicked "browse" to get the raw JAR url.
-    # Additionally, this is the flink-sql-connector-kafka as opposed to the flink-connector-kafka because it includes all of its dependencies.
-    entrypoint: >
-      bash -c "
-      wget -P /opt/flink/lib/ https://repo1.maven.org/maven2/org/apache/flink/flink-sql-connector-kafka/3.1.0-1.18/flink-sql-connector-kafka-3.1.0-1.18.jar &&
-      /docker-entrypoint.sh jobmanager
-      "
+    command: jobmanager
     environment:
       - |
         FLINK_PROPERTIES=
@@ -26,20 +19,18 @@ services:
         parallelism.default: 4
 
   taskmanager:
-    image: flink:1.18.1-scala_2.12
+    build: ./flink  # Same image as the jobmanager; the second build is a cache hit.
+    image: try-flink/flink:1.18.1
     depends_on:
       - jobmanager
-    # TaskManager needs a copy of the connector JAR to run parallel pipelines too
-    entrypoint: >
-      bash -c "
-      wget -P /opt/flink/lib/ https://repo1.maven.org/maven2/org/apache/flink/flink-sql-connector-kafka/3.1.0-1.18/flink-sql-connector-kafka-3.1.0-1.18.jar &&
-      /docker-entrypoint.sh taskmanager
-      " 
+    command: taskmanager
     environment:
       - |
         FLINK_PROPERTIES=
         jobmanager.rpc.address: jobmanager
-        taskmanager.numberOfTaskSlots: 8  # Each slot splits the TaskManager's memory, so 100 slots left each one ~5MB of managed memory.
+        # Each slot gets an equal share of the TaskManager's memory, so 100 slots left each one ~5MB of managed memory.
+        # 8 slots runs the parallelism-4 job with headroom for a benchmark alongside it.
+        taskmanager.numberOfTaskSlots: 8
         cluster.registration.timeout: 5 min
 
   kafka:
