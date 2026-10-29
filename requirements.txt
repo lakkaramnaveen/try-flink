@@ -1,2 +1,3 @@
 Flask>=3.0,<4
 confluent-kafka>=2.14,<3  # Kafka producer backed by the native librdkafka library.
+numpy>=1.26  # Only needed to regenerate youtube-clicks.csv.

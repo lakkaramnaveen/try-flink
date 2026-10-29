@@ -1,3 +1,7 @@
 .simulation-control.json
 .traffic-metrics.bin
 __pycache__/
+sql/_bench.sql
+.flink-sql.log
+sql/.session.sql
+bench/results.csv

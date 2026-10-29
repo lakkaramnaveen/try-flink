@@ -88,7 +88,7 @@ class ImmediateClock:
 
 
 class SimulatorProducerTests(unittest.TestCase):
-    def run_simulator(self, producer, clock=ImmediateClock):
+    def run_simulator(self, producer, clock=ImmediateClock, settings=None):
         """Execute the actual script, replacing only its external boundaries."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -97,7 +97,7 @@ class SimulatorProducerTests(unittest.TestCase):
                 writer.writerow(('videoid', 'timestamp'))
                 writer.writerows(ROWS)
             control = root / 'control.json'
-            control.write_text(json.dumps({'paused': False, 'speed': 10000}))
+            control.write_text(json.dumps({'paused': False, 'speed': 10000, **(settings or {})}))
             metrics_path = root / 'metrics.bin'
             producer_factory = Mock(return_value=producer)
             kafka = types.ModuleType('confluent_kafka')
@@ -179,6 +179,36 @@ class SimulatorProducerTests(unittest.TestCase):
         self.assertTrue(namespace['simulation_clock'].callback_during_wait)
         self.assertEqual(totals, {'attempted': 2, 'acked': 2, 'errors': 0})
         self.assertFalse(namespace['delivery_poller'].is_alive())
+
+    def test_burst_sends_every_click_burst_factor_times(self):
+        producer = FakeProducer()
+        _, totals, _ = self.run_simulator(producer, settings={'burst_until': 4e9, 'burst_factor': 3})
+
+        self.assertEqual([value for _, value in producer.accepted], [
+            json.dumps({'videoid': video, 'timestamp': timestamp}).encode('utf-8')
+            for video, timestamp in ROWS for _ in range(3)
+        ])
+        self.assertEqual(totals, {'attempted': 6, 'acked': 6, 'errors': 0})
+
+    def test_expired_burst_is_ignored(self):
+        producer = FakeProducer()
+        self.run_simulator(producer, settings={'burst_until': 1, 'burst_factor': 3})
+        self.assertEqual(len(producer.accepted), 2)
+
+    def test_late_clicks_keep_their_timestamp_and_are_sent_300_simulated_seconds_later(self):
+        producer = FakeProducer()
+        waits = []
+
+        class RecordingClock(ImmediateClock):
+            def wait_until(self, seconds_since_start):
+                waits.append((seconds_since_start, len(producer.accepted)))
+
+        _, totals, _ = self.run_simulator(producer, RecordingClock, settings={'late_percent': 100})
+
+        self.assertEqual([json.loads(value)['timestamp'] for _, value in producer.accepted], [ts for _, ts in ROWS])
+        # Both rows are read (at 0s and 1s) before anything is sent, then released at 300s and 301s.
+        self.assertEqual(waits, [(0, 0), (1, 0), (300, 0), (301, 1)])
+        self.assertEqual(totals, {'attempted': 2, 'acked': 2, 'errors': 0})
 
 
 if __name__ == '__main__':
