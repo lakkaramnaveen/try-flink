@@ -21,9 +21,13 @@ make panel   # or: python3 app.py
 
 Then open http://localhost:5050, and click the play button.  This will start the docker containers, submit the Flink query and start the traffic.
 
- - The speed picker sets how fast simulated time runs: at 120× the day of traffic takes 12 minutes, at 10000× about 9 seconds.
- - The line under the status shows the running Flink job: its parallelism, how many records per second it is consuming, its busiest task, and backpressure.  Anything highlighted red is worth tuning.
- - The query's results are written to `.flink-sql.log`.  Follow them with `make results`.
+ - **Speed** sets how fast simulated time runs: at 120× the day of traffic takes 12 minutes, at 10000× about 9 seconds.
+ - **Flink parallelism** rescales the running job: it is stopped with a savepoint and restarted from it, so no clicks are lost or double counted.
+ - **Late clicks** holds back 5% or 20% of clicks for 5 simulated minutes, so Flink drops them as late (shown as "late dropped").  At 120× all of them are dropped; at 1000× about half, because the watermark trails further behind at high speed.
+ - **Spike ×10** sends every click 10 times for 30 seconds, like a video going viral.
+ - The line under the status is the running Flink job: parallelism, TaskManagers, records consumed per second, lag (records in Kafka not yet read), the busiest task, backpressure and late clicks dropped.  Anything red is worth tuning.
+ - The chart shows Flink's consumption (green) against the traffic sent to Kafka.  If green falls below the others, Flink is falling behind and lag grows.
+ - **Top videos** lists the most clicked videos in the latest minute Flink has closed.
  - Stopping the panel (Ctrl+C) stops the docker containers too.
 
 The panel uses port 5050 because macOS's AirPlay Receiver already listens on 5000.  Set `PORT` to use another one.
@@ -39,17 +43,18 @@ Start the docker desktop app then run `make up` (`docker compose up -d --build`)
 `youtube-clicks.csv` is already checked in.  To regenerate it run `make data`.  The generator is seeded, so it produces the same file every time unless you change `SEED`.
 
 ## 3. Send the fake data to the kafka
-Run `python3 run-sim.py`.  Set `SIM_SPEED` (default 120) to change the speed, or edit `.simulation-control.json` while it runs.
+Run `python3 run-sim.py`.  Set `SIM_SPEED` (default 120) to change the speed, or edit `.simulation-control.json` while it runs (see `read_settings()` in `run-sim.py` for every setting).
 
 ## 4. Get flink to consume the data from Kafka
 
 The query lives in [`sql/clicks-per-minute.sql`](sql/clicks-per-minute.sql) which is mirrored into the docker container.  Run it like this:
 
 ```sh
-make sql
+make sql       # submits the job; it keeps running in Flink
+make results   # follows its output
 ```
 
-The output is clicks **per video per simulated minute**.  A minute is printed once the watermark passes it, i.e. once clicks from 10 seconds into the next minute have arrived.
+The output is clicks **per video per simulated minute**, written to the `clicks-per-minute` topic.  A minute is written once the watermark passes it, i.e. once clicks from 10 seconds into the next minute have arrived.  The job checkpoints every 10 seconds, so resubmitting it resumes from where it stopped.
 
 For an interactive SQL prompt instead:
 
@@ -66,7 +71,7 @@ View Flink's web dashboard: http://localhost:8081
 
 View Kafka's web dashboard: http://localhost:8080/overview
 
-The traffic chart and the Flink job summary are in the control panel: http://localhost:5050.
+The traffic chart, the Flink job summary and the top videos are in the control panel: http://localhost:5050.
 
 # How to benchmark / tune Flink
 The simulated day is only 100k clicks, so it can't stress Flink.  Instead, load a big backlog and time how fast Flink drains it:
@@ -75,9 +80,12 @@ The simulated day is only 100k clicks, so it can't stress Flink.  Instead, load 
 make up
 make bench-data   # 20M events into the bench-clicks topic.  BENCH_DAYS=50 for fewer.
 make bench        # parallelism 1 vs 4
+make bench-report # best and median of every setup run so far
 ```
 
-Or run `bench/bench.sh <name> <parallelism> <legacy|tvf> ["SET 'key' = 'value';" ...]` to try other settings.  Each run reads the whole backlog with a fresh consumer group, writes to a blackhole sink so printing isn't the bottleneck, and reports records per second.
+Or run `bench/bench.sh <name> <parallelism> <legacy|tvf> ["SET 'key' = 'value';" ...]` to try other settings.  Each run reads the whole backlog with a fresh consumer group, writes to a blackhole sink so printing isn't the bottleneck, and reports records per second.  Every run is appended to `bench/results.csv`.  Runs on a laptop vary by ±20%, so compare medians of a few runs, not single runs.
+
+To try more TaskManagers: `make scale TM=2`, then benchmark again.
 
 Results on a 14 core laptop, 20M events:
 
@@ -91,15 +99,26 @@ Results on a 14 core laptop, 20M events:
 
 Takeaways: parallelism matching the partition count is the big win; mini-batch doesn't affect window aggregates; going past the partition count barely helps because the Kafka source is capped at one reader per partition.
 
+TaskManagers, medians of 3 runs:
+
+| Setup | 1 TaskManager | 2 TaskManagers |
+| --- | --- | --- |
+| parallelism 4 | ~1.32M rec/s | ~1.21M rec/s |
+| parallelism 8 | ~1.44M rec/s | ~1.81M rec/s |
+
+Splitting parallelism 4 across two TaskManagers doesn't pay: records now cross the network between them.  At parallelism 8, two TaskManagers (two JVMs, each with its own memory and network buffers) do better than one.  Both still share one laptop's CPUs, so this is about JVM limits, not more hardware.
+
 # How to run the tests
 `make test` runs everything.  None of the tests need Docker or Kafka.
- - `python3 -m unittest test_app test_traffic_metrics test_simulation_clock test_simulator_producer`
+ - `python3 -m unittest test_app test_flink_monitor test_results test_traffic_metrics test_simulation_clock test_simulator_producer`
  - `node test_traffic_chart.cjs`
 
 They also run on every pull request (`.github/workflows/test.yml`).
 
 # Files
  - `app.py` - The control panel's Flask server: starts and stops the stack and serves the dashboard and its API.
+ - `flink_monitor.py` - Reads Flink's REST API: job metrics, a once-a-second history for the chart, and stop-with-savepoint for rescaling.
+ - `results.py` - Reads the job's output topic and keeps the latest minute's top videos.
  - `control-panel.html`, `static/` - The dashboard page, its styles and scripts.  `static/traffic-metrics.mjs` decodes the traffic samples.
  - `run-sim.py` - This sends the clicks to the kafka, respecting the timestamps for each event.
  - `simulation_clock.py` - The simulator's clock, which can be paused and sped up while running.
@@ -109,7 +128,7 @@ They also run on every pull request (`.github/workflows/test.yml`).
  - `sql/clicks-per-minute.sql` - This contains the clicks-per-minute query in flinkSQL.
  - `docker-compose.yml` - This describes and configures a kafka and a flink instance.
  - `flink/Dockerfile` - The Flink image, with the Kafka connector baked in.
- - `bench/` - The throughput benchmark: `bulk-load.py` fills a topic as fast as possible, `bench.sh` times Flink draining it.
+ - `bench/` - The throughput benchmark: `bulk-load.py` fills a topic as fast as possible, `bench.sh` times Flink draining it, `report.py` summarizes `results.csv`.
  - `docs/architecture.md` - How the pieces fit together, and the design decisions.
 
 # Debugging
