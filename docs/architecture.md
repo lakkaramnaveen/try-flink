@@ -119,6 +119,21 @@ A Kafka consumer reads `clicks-per-minute` from the beginning, using a fresh gro
 
 Rows are *set*, not added, so an at-least-once duplicate doesn't inflate a count.  Only the last 5 minutes are kept.  `/api/top-videos` takes the newest minute, sorts by count (then name, so ties are stable), and returns the top 10 plus the minute's total.
 
+## Correctness, verified
+
+`test_e2e.py` (`make e2e`) replays the day of clicks through the real stack and checks every (video, minute) count Flink writes against the CSV:
+
+| Scenario | Rows written | Rewritten | Counts correct |
+| --- | --- | --- | --- |
+| Rescale 4 → 2 mid-run (stop-with-savepoint) | 46,890 | 0 | all 46,890 |
+| TaskManager killed mid-run (restart from checkpoint) | 47,300 | 410 | all 46,890 |
+
+A savepoint stop is clean, so nothing is rewritten.  After a crash, Flink rewinds to the last checkpoint and replays.  Rows written since that checkpoint are written again, and the reader's "latest count wins" makes that harmless.  This is what at-least-once output plus idempotent readers buys, without Kafka transactions.
+
+## The control panel's own security
+
+The panel only binds to 127.0.0.1, but a web page open in the same browser can still send it requests.  It rejects any POST whose `Origin` is another site; `/api/stop` takes no body, so a browser would otherwise send it cross-site without asking.  It also rejects any request whose `Host` isn't local, which defeats DNS rebinding.
+
 ## Tuning decisions
 
 Measured with `bench/` (see the README for the numbers):

@@ -3,7 +3,7 @@
 PYTHON ?= python3
 BENCH_DAYS ?= 200
 
-.PHONY: help install panel up down restart scale sql results logs data test bench-data bench bench-report
+.PHONY: help install panel up down restart scale sql results logs data test e2e bench-data bench bench-report
 
 help:  ## List the available targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  make %-13s %s\n", $$1, $$2}'
@@ -41,6 +41,9 @@ data:  ## Regenerate youtube-clicks.csv
 test:  ## Run the Python and JavaScript tests (no Docker needed)
 	$(PYTHON) -m unittest test_app test_flink_monitor test_results test_traffic_metrics test_simulation_clock test_simulator_producer
 	node test_traffic_chart.cjs
+
+e2e:  ## Check on a fresh stack that Flink counts every click exactly once, across a rescale and a crash (~5 min)
+	RUN_E2E=1 $(PYTHON) -m unittest -v test_e2e
 
 bench-data:  ## Load BENCH_DAYS days of clicks (100k each) into the bench-clicks topic
 	docker compose exec kafka rpk topic create bench-clicks -p 4 -r 1 || true

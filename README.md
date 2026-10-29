@@ -109,11 +109,13 @@ TaskManagers, medians of 3 runs:
 Splitting parallelism 4 across two TaskManagers doesn't pay: records now cross the network between them.  At parallelism 8, two TaskManagers (two JVMs, each with its own memory and network buffers) do better than one.  Both still share one laptop's CPUs, so this is about JVM limits, not more hardware.
 
 # How to run the tests
-`make test` runs everything.  None of the tests need Docker or Kafka.
+`make test` runs the unit tests.  None of them need Docker or Kafka.
  - `python3 -m unittest test_app test_flink_monitor test_results test_traffic_metrics test_simulation_clock test_simulator_producer`
  - `node test_traffic_chart.cjs`
 
-They also run on every pull request (`.github/workflows/test.yml`).
+`make e2e` checks the whole pipeline against a fresh Docker stack (~5 minutes).  It replays the day of clicks and compares every (video, minute) count Flink writes against the CSV, once with a rescale from 4 to 2 mid-run and once with the TaskManager killed mid-run.  Both must match exactly.
+
+Both run on every pull request (`.github/workflows/test.yml`).
 
 # Files
  - `app.py` - The control panel's Flask server: starts and stops the stack and serves the dashboard and its API.
@@ -129,6 +131,7 @@ They also run on every pull request (`.github/workflows/test.yml`).
  - `docker-compose.yml` - This describes and configures a kafka and a flink instance.
  - `flink/Dockerfile` - The Flink image, with the Kafka connector baked in.
  - `bench/` - The throughput benchmark: `bulk-load.py` fills a topic as fast as possible, `bench.sh` times Flink draining it, `report.py` summarizes `results.csv`.
+ - `test_*.py`, `test_traffic_chart.cjs` - Unit tests; `test_e2e.py` is the end-to-end test.
  - `docs/architecture.md` - How the pieces fit together, and the design decisions.
 
 # Debugging
