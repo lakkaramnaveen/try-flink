@@ -15,6 +15,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from flask import Flask, Response, jsonify, request, send_file
 
@@ -74,6 +75,23 @@ def bad_request(error):
 @app.errorhandler(Conflict)
 def conflict(error):
     return jsonify({"error": str(error)}), 409
+
+
+@app.before_request
+def local_requests_only():
+    """Refuse requests that other websites open in the user's browser could make.
+
+    - A page on another site can POST to http://localhost:5050 (e.g. /api/stop needs no body, so the
+      browser sends it without asking first).  Browsers name the requesting page in Origin, so reject
+      any other origin.
+    - DNS rebinding makes another site's hostname resolve to 127.0.0.1, so it looks same-origin.
+      The Host header still carries that hostname, so only accept local ones.
+    """
+    if urlsplit(f"//{request.host}").hostname not in ("localhost", "127.0.0.1", "::1"):
+        return jsonify({"error": "Only local requests are allowed"}), 403
+    origin = request.headers.get("Origin")
+    if request.method != "GET" and origin is not None and urlsplit(origin).netloc != request.host:
+        return jsonify({"error": "Cross-origin requests are not allowed"}), 403
 
 
 def json_body():

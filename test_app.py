@@ -100,6 +100,22 @@ class AppTests(unittest.TestCase):
             subprocess.run([sys.executable, "-c", "import app"], cwd=Path(app.__file__).parent, env=env, check=True)
             self.assertFalse(marker.exists())
 
+    def test_other_websites_cannot_control_the_panel(self):
+        # A page on another site POSTing to localhost: the browser names it in Origin.
+        with patch("app.stop_stack") as stop_stack:
+            response = self.client.post("/api/stop", headers={"Origin": "https://evil.example"})
+        self.assertEqual(response.status_code, 403)
+        stop_stack.assert_not_called()
+        # DNS rebinding: same origin as far as the browser knows, but the Host is the other site's.
+        self.assertEqual(self.client.get("/api/status", headers={"Host": "evil.example:5050"}).status_code, 403)
+
+    def test_the_panel_itself_is_allowed(self):
+        for host in ("localhost:5050", "127.0.0.1:5050", "[::1]:5050"):
+            with self.subTest(host=host):
+                response = self.client.post("/api/speed", json={"speed": 60}, headers={"Host": host, "Origin": f"http://{host}"})
+                self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.client.post("/api/speed", json={"speed": 60}).status_code, 200)  # No Origin, e.g. curl.
+
     def test_choices_reject_bad_input_with_400(self):
         for path, key in (("/api/speed", "speed"), ("/api/parallelism", "parallelism"), ("/api/late", "late_percent")):
             for body in ({key: 7}, {key: "fast"}, {key: True}, [], None):
