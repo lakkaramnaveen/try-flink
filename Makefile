@@ -3,10 +3,10 @@
 PYTHON ?= python3
 BENCH_DAYS ?= 200
 
-.PHONY: help install panel up down restart sql results logs data test bench-data bench
+.PHONY: help install panel up down restart scale sql results logs data test bench-data bench bench-report
 
 help:  ## List the available targets
-	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  make %-11s %s\n", $$1, $$2}'
+	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  make %-13s %s\n", $$1, $$2}'
 
 install:  ## Install the Python dependencies
 	$(PYTHON) -m pip install -r requirements.txt
@@ -21,6 +21,10 @@ down:  ## Stop and remove the Docker containers (Kafka data is discarded)
 	docker compose down --remove-orphans
 
 restart: down up  ## Clean restart of the Docker stack
+
+TM ?= 2
+scale:  ## Run TM TaskManagers (default 2), e.g. `make scale TM=3`
+	docker compose up -d --scale taskmanager=$(TM)
 
 sql:  ## Submit the clicks-per-minute job (it writes to the clicks-per-minute topic)
 	docker compose exec jobmanager ./bin/sql-client.sh -f /opt/flink/sql/clicks-per-minute.sql
@@ -42,6 +46,9 @@ bench-data:  ## Load BENCH_DAYS days of clicks (100k each) into the bench-clicks
 	docker compose exec kafka rpk topic create bench-clicks -p 4 -r 1 || true
 	$(PYTHON) bench/bulk-load.py bench-clicks $(BENCH_DAYS)
 
-bench:  ## Compare parallelism 1 and 4 on the bench-clicks backlog
+bench:  ## Compare parallelism 1 and 4 on the bench-clicks backlog (results are appended to bench/results.csv)
 	bench/bench.sh p1 1 legacy
 	bench/bench.sh p4 4 legacy
+
+bench-report:  ## Summarize every benchmark run so far, fastest setup first
+	$(PYTHON) bench/report.py

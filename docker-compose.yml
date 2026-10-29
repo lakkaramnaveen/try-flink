@@ -20,6 +20,8 @@ services:
         state.savepoints.dir: file:///flink-data/savepoints
         # Refresh the metrics behind the REST API every second (default 10s) so the control panel's chart is live.
         metrics.fetcher.update-interval: 1000
+        # Spread a job's subtasks across all TaskManagers (e.g. after `make scale TM=2`) instead of filling the first one.
+        cluster.evenly-spread-out-slots: true
         # Match the youtube-clicks partition count.  Benchmarked ~2.5x the throughput of parallelism 1 (see bench/).
         parallelism.default: 4
 

@@ -38,9 +38,22 @@ else
 fi
 } > sql/_bench.sql
 
-docker compose exec -T jobmanager ./bin/sql-client.sh -f /opt/flink/sql/_bench.sql > /dev/null
+docker compose exec -T jobmanager ./bin/sql-client.sh -f /opt/flink/sql/_bench.sql > /dev/null 2>&1
+TASKMANAGERS=$(curl -s localhost:8081/overview | python3 -c "import json, sys; print(json.load(sys.stdin)['taskmanagers'])")
+
+# Print the result and append it to bench/results.csv; `make bench-report` summarizes that file.
 curl -s localhost:8081/jobs/overview | python3 -c "
-import json, sys
+import csv, datetime, json, os, sys
 job = max((j for j in json.load(sys.stdin)['jobs'] if j['name'] == 'bench-$NAME'), key=lambda j: j['start-time'])
 seconds = job['duration'] / 1000
-print(f\"$NAME: {job['state']} p=$P q=$Q  {seconds:.1f}s  {$TOTAL / seconds:,.0f} rec/s\")"
+rate = $TOTAL / seconds
+print(f\"$NAME: {job['state']} p=$P q=$Q tm=$TASKMANAGERS  {seconds:.1f}s  {rate:,.0f} rec/s\")
+path = 'bench/results.csv'
+new = not os.path.exists(path)
+with open(path, 'a', newline='') as results:
+    writer = csv.writer(results)
+    if new:
+        writer.writerow(['date', 'name', 'parallelism', 'query', 'taskmanagers', 'records', 'seconds', 'records_per_second', 'state', 'settings'])
+    writer.writerow([datetime.datetime.now().isoformat(timespec='seconds'), '$NAME', $P, '$Q', $TASKMANAGERS, $TOTAL,
+                     round(seconds, 2), round(rate), job['state'], sys.argv[1]])
+" "$*"
