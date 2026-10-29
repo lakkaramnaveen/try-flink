@@ -7,6 +7,7 @@ services:
         condition: service_completed_successfully
     volumes:
       - ./sql:/opt/flink/sql:ro
+      - flink-data:/flink-data
     ports:
       - "8081:8081"
     command: jobmanager
@@ -15,6 +16,10 @@ services:
         FLINK_PROPERTIES=
         jobmanager.rpc.address: jobmanager
         cluster.registration.timeout: 5 min
+        state.checkpoints.dir: file:///flink-data/checkpoints
+        state.savepoints.dir: file:///flink-data/savepoints
+        # Refresh the metrics behind the REST API every second (default 10s) so the control panel's chart is live.
+        metrics.fetcher.update-interval: 1000
         # Match the youtube-clicks partition count.  Benchmarked ~2.5x the throughput of parallelism 1 (see bench/).
         parallelism.default: 4
 
@@ -24,6 +29,8 @@ services:
     depends_on:
       - jobmanager
     command: taskmanager
+    volumes:
+      - flink-data:/flink-data
     environment:
       - |
         FLINK_PROPERTIES=
@@ -32,6 +39,8 @@ services:
         # 8 slots runs the parallelism-4 job with headroom for a benchmark alongside it.
         taskmanager.numberOfTaskSlots: 8
         cluster.registration.timeout: 5 min
+        state.checkpoints.dir: file:///flink-data/checkpoints
+        state.savepoints.dir: file:///flink-data/savepoints
 
   kafka:
     image: docker.redpanda.com/redpandadata/redpanda:v23.2.1
@@ -53,7 +62,7 @@ services:
       - --advertise-kafka-addr
       - internal://kafka:9092,external://127.0.0.1:19092  # This is intentionally set to 127.0.0.1 instead of localhost to force it to use ipv4.  MacOS smartly switches between ipv4 and ipv6, but we're not sure if the python kafka client is smart enough to switch in sync, so we enforce ipv4 to be safe.
 
-  # Creates the Kafka topic before Flink starts. Safe to rerun with an existing topic.
+  # Creates the Kafka topics before Flink starts. Safe to rerun with existing topics.
   kafka-init:
     image: docker.redpanda.com/redpandadata/redpanda:v23.2.1
     depends_on:
@@ -66,7 +75,11 @@ services:
         if ! rpk topic describe youtube-clicks --brokers kafka:9092 >/dev/null 2>&1; then
           rpk topic create youtube-clicks --partitions 4 --replicas 1 --brokers kafka:9092
         fi
-        rpk topic describe youtube-clicks --brokers kafka:9092
+        # The Flink job's output: one record per video per minute.
+        if ! rpk topic describe clicks-per-minute --brokers kafka:9092 >/dev/null 2>&1; then
+          rpk topic create clicks-per-minute --partitions 1 --replicas 1 --brokers kafka:9092
+        fi
+        rpk topic list --brokers kafka:9092
 
   # This is a kafka viewer.
   console:
@@ -79,4 +92,6 @@ services:
       kafka:
         condition: service_healthy
 
-
+volumes:
+  # Flink checkpoints and savepoints.  `docker compose down -v` deletes them.
+  flink-data:

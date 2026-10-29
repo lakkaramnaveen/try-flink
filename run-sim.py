@@ -1,11 +1,13 @@
 import csv
+import heapq
 import json
 import os
+import random
 import threading
 import time
 from collections import Counter
 from datetime import datetime, timedelta
-from itertools import chain
+from itertools import chain, count
 from confluent_kafka import Producer
 
 from simulation_clock import SimulationClock
@@ -38,7 +40,13 @@ CONTROL_FILE = os.environ.get('SIM_CONTROL_FILE', '.simulation-control.json')
 METRICS_FILE = os.environ.get('SIM_METRICS_FILE', '.traffic-metrics.bin')
 DEFAULT_SPEED = float(os.environ.get('SIM_SPEED', '120'))
 CONTROL_POLL_INTERVAL = 0.2
-cached_control = (False, DEFAULT_SPEED)
+# Late clicks are held back this many simulated seconds, well past the 60s window plus the 10s watermark delay.
+# Flink only advances the watermark every 200ms of wall time, so at high speeds it trails by many simulated
+# seconds and some "late" clicks still land in open windows.  Measured: at 120x every late click is dropped,
+# at 1000x about half are.
+LATE_DELAY_SECONDS = 300
+DEFAULT_SETTINGS = {'paused': False, 'speed': DEFAULT_SPEED, 'late_percent': 0, 'burst_until': 0, 'burst_factor': 1}
+cached_settings = DEFAULT_SETTINGS
 next_control_read = 0.0
 
 metrics_lock = threading.Lock()
@@ -80,20 +88,37 @@ def write_metrics():
             metrics_file.flush()
 
 
-def read_control():
-    """Return (paused, speed), reading the file at most every 200 ms."""
-    global cached_control, next_control_read
+def read_settings():
+    """Return the control panel's settings, reading the file at most every 200 ms.
+
+    paused, speed: drive the simulation clock.
+    late_percent: the share of clicks to deliver LATE_DELAY_SECONDS late.
+    burst_until, burst_factor: until this epoch time, send every click burst_factor times (a viral spike).
+    """
+    global cached_settings, next_control_read
     now = time.monotonic()
     if now < next_control_read:
-        return cached_control
+        return cached_settings
     try:
         with open(CONTROL_FILE, 'r') as control_file:
             value = json.load(control_file)
-        cached_control = bool(value.get('paused', False)), max(float(value.get('speed', DEFAULT_SPEED)), 0.01)
-    except (FileNotFoundError, json.JSONDecodeError, TypeError, ValueError):
-        cached_control = False, DEFAULT_SPEED
+        cached_settings = {
+            'paused': bool(value.get('paused', False)),
+            'speed': max(float(value.get('speed', DEFAULT_SPEED)), 0.01),
+            'late_percent': float(value.get('late_percent', 0)),
+            'burst_until': float(value.get('burst_until', 0)),
+            'burst_factor': max(int(value.get('burst_factor', 1)), 1),
+        }
+    except (FileNotFoundError, json.JSONDecodeError, TypeError, ValueError, AttributeError):
+        cached_settings = DEFAULT_SETTINGS
     next_control_read = time.monotonic() + CONTROL_POLL_INTERVAL
-    return cached_control
+    return cached_settings
+
+
+def read_control():
+    """Return (paused, speed) for the simulation clock."""
+    settings = read_settings()
+    return settings['paused'], settings['speed']
 
 print("Starting throttled real-time stream simulation...", flush=True)
 metrics_writer = threading.Thread(target=write_metrics, daemon=True)
@@ -121,6 +146,30 @@ def expected_rate(virtual_time, speed):
     window_start = max(0, current_offset - window_seconds + 1)
     return expected_prefix[current_offset + 1] - expected_prefix[window_start]
 
+def produce(payload):
+    while True:
+        try:
+            producer.produce(TOPIC, value=payload, on_delivery=on_delivery)
+            break
+        except BufferError:
+            # Wait for queue space, then retry this event without dropping it.
+            producer.poll(0.1)
+    record_metric('attempted')
+
+
+# Late clicks waiting to be sent, as a heap of (simulated send time, tiebreaker, payload).
+late_clicks = []
+late_sequence = count()
+
+
+def release_late_clicks(until_seconds):
+    """Send every held-back click due at or before this simulated time."""
+    while late_clicks and late_clicks[0][0] <= until_seconds:
+        send_at, _, payload = heapq.heappop(late_clicks)
+        simulation_clock.wait_until(send_at)
+        produce(payload)
+
+
 with open(CSV_FILE, 'r') as f:
     reader = csv.reader(f)
     header = next(reader) # Skip header
@@ -133,21 +182,22 @@ with open(CSV_FILE, 'r') as f:
         vid, ts_str = row[0], row[1]
         current_virtual_time = datetime.fromisoformat(ts_str)
         seconds_since_start = (current_virtual_time - first_virtual_time).total_seconds()
+        release_late_clicks(seconds_since_start)
         simulation_clock.wait_until(seconds_since_start)
-            
-        # Emit the event to Kafka
+
+        # Emit the event to Kafka, keeping its original timestamp even if it's sent late.
         payload = json.dumps({"videoid": vid, "timestamp": ts_str}).encode('utf-8')
-        while True:
-            try:
-                producer.produce(TOPIC, value=payload, on_delivery=on_delivery)
-                break
-            except BufferError:
-                # Wait for queue space, then retry this event without dropping it.
-                producer.poll(0.1)
-        record_metric('attempted')
-        _, speed = read_control()
-        set_expected_rate(expected_rate(current_virtual_time, speed))
-        
+        settings = read_settings()
+        copies = settings['burst_factor'] if time.time() < settings['burst_until'] else 1
+        if random.random() * 100 < settings['late_percent']:
+            heapq.heappush(late_clicks, (seconds_since_start + LATE_DELAY_SECONDS, next(late_sequence), payload))
+        else:
+            for _ in range(copies):
+                produce(payload)
+        set_expected_rate(expected_rate(current_virtual_time, settings['speed']) * copies)
+
+    release_late_clicks(float('inf'))
+
 delivery_stop.set()
 delivery_poller.join(timeout=2)
 producer.flush()

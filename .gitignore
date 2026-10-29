@@ -3,3 +3,4 @@
 __pycache__/
 sql/_bench.sql
 .flink-sql.log
+sql/.session.sql

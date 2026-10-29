@@ -22,11 +22,11 @@ down:  ## Stop and remove the Docker containers (Kafka data is discarded)
 
 restart: down up  ## Clean restart of the Docker stack
 
-sql:  ## Submit the clicks-per-minute query and print its results
+sql:  ## Submit the clicks-per-minute job (it writes to the clicks-per-minute topic)
 	docker compose exec jobmanager ./bin/sql-client.sh -f /opt/flink/sql/clicks-per-minute.sql
 
-results:  ## Follow the query results when the job was started from the control panel
-	tail -f .flink-sql.log
+results:  ## Follow the job's results: clicks per video per minute
+	docker compose exec kafka rpk topic consume clicks-per-minute -f '%v\n'
 
 logs:  ## Follow the Flink logs
 	docker compose logs -f jobmanager taskmanager
@@ -35,7 +35,7 @@ data:  ## Regenerate youtube-clicks.csv
 	$(PYTHON) generate-fake-clicks-data.py
 
 test:  ## Run the Python and JavaScript tests (no Docker needed)
-	$(PYTHON) -m unittest test_app test_traffic_metrics test_simulation_clock test_simulator_producer
+	$(PYTHON) -m unittest test_app test_flink_monitor test_results test_traffic_metrics test_simulation_clock test_simulator_producer
 	node test_traffic_chart.cjs
 
 bench-data:  ## Load BENCH_DAYS days of clicks (100k each) into the bench-clicks topic

@@ -16,7 +16,7 @@
       </button>
     </div>
 
-    <!-- Keep the options in sync with SPEEDS in app.py. -->
+    <!-- Keep the options of every <select> in sync with SPEEDS, PARALLELISMS and LATE_PERCENTS in app.py. -->
     <div class="speed-wrap">
       <select id="speed" aria-label="Simulated time speed">
         <option value="1">1×</option>
@@ -29,13 +29,37 @@
       <span class="chevron"></span>
     </div>
 
+    <div class="tuning">
+      <label>Flink parallelism
+        <select id="parallelism">
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="4" selected>4</option>
+          <option value="8">8</option>
+        </select>
+      </label>
+      <label>Late clicks
+        <select id="late">
+          <option value="0" selected>None</option>
+          <option value="5">5%</option>
+          <option value="20">20%</option>
+        </select>
+      </label>
+      <button id="burst" class="burst" title="Send every click 10 times for 30 seconds">Spike ×10</button>
+    </div>
+
     <div class="status"><span id="dot" class="dot"></span><span id="message">Checking status…</span></div>
     <div id="flink" class="flink" aria-live="polite"></div>
 
     <section class="traffic" aria-label="Kafka traffic">
       <div class="traffic-heading"><strong id="current-rps">0 RPS</strong><span>Kafka delivery rate · last 15 minutes</span></div>
       <canvas id="traffic-chart" class="chart" height="260"></canvas>
-      <div class="legend"><span class="expected">Expected RPS</span><span class="attempted">Attempted RPS</span><span class="acked">Acknowledged RPS</span></div>
+      <div class="legend"><span class="expected">Expected RPS</span><span class="attempted">Attempted RPS</span><span class="acked">Acknowledged RPS</span><span class="flink-line">Flink consumed RPS</span></div>
+    </section>
+
+    <section class="top-videos" aria-label="Top videos">
+      <div class="traffic-heading"><strong>Top videos</strong><span id="top-window">Flink's per-minute counts appear here as each minute closes</span></div>
+      <ol id="top-list"></ol>
     </section>
   </main>
   <div id="toast" class="toast" role="status"></div>

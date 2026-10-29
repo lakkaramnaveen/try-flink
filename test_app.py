@@ -1,5 +1,6 @@
-"""Control panel API checks with Docker, Flink, and the simulator replaced by fakes."""
+"""Control panel API checks with Docker, Flink, Kafka, and the simulator replaced by fakes."""
 
+import json
 import os
 import re
 import subprocess
@@ -8,7 +9,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import app
 
@@ -36,17 +37,33 @@ class FakeProcess:
         self.terminate()
 
 
+def wait_for(condition):
+    for _ in range(200):
+        if condition():
+            return
+        threading.Event().wait(0.01)
+    raise AssertionError("Timed out")
+
+
 class AppTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
+        self.directory = Path(directory.name)
+        self.monitor = Mock()
         for name, value in {
-            "CONTROL_FILE": Path(directory.name) / "control.json",
-            "SQL_LOG_FILE": Path(directory.name) / "sql.log",
-            "state": {"running": False, "starting": False, "paused": False, "speed": 120, "message": "Ready"},
+            "CONTROL_FILE": self.directory / "control.json",
+            "SQL_LOG_FILE": self.directory / "sql.log",
+            "SESSION_FILE": self.directory / "session.sql",
+            "state": {
+                "running": False, "starting": False, "rescaling": False, "paused": False, "speed": 120,
+                "parallelism": 4, "late_percent": 0, "burst_until": 0, "message": "Ready",
+            },
             "simulator": None,
             "sql_client": None,
             "compose_up": None,
+            "monitor": self.monitor,
+            "results_consumer": Mock(),
         }.items():
             patcher = patch.object(app, name, value)
             patcher.start()
@@ -55,6 +72,22 @@ class AppTests(unittest.TestCase):
         self.down.start()
         self.addCleanup(self.down.stop)
         self.client = app.app.test_client()
+
+    def control(self):
+        return json.loads(app.CONTROL_FILE.read_text())
+
+    def boot(self):
+        """Start the stack with every external command faked; returns the commands run."""
+        commands = []
+
+        def fake_run_command(args, **kwargs):
+            commands.append(args)
+            return FakeProcess(wait_gate=threading.Event() if args[0] == "python3" else None)
+
+        with patch("app.run_command", side_effect=fake_run_command), patch("app.wait_for_flink", return_value=True):
+            self.client.post("/api/start")
+            wait_for(lambda: not app.state["starting"])
+        return commands
 
     def test_importing_the_app_never_runs_docker(self):
         # A fake `docker` on PATH records any call, e.g. a teardown registered at import time.
@@ -67,24 +100,38 @@ class AppTests(unittest.TestCase):
             subprocess.run([sys.executable, "-c", "import app"], cwd=Path(app.__file__).parent, env=env, check=True)
             self.assertFalse(marker.exists())
 
-    def test_speed_rejects_bad_input_with_400(self):
-        for body in ({"speed": 7}, {"speed": "fast"}, {"speed": True}, [], None):
-            with self.subTest(body=body):
-                response = self.client.post("/api/speed", json=body)
-                self.assertEqual(response.status_code, 400)
-                self.assertIn("error", response.json)
+    def test_choices_reject_bad_input_with_400(self):
+        for path, key in (("/api/speed", "speed"), ("/api/parallelism", "parallelism"), ("/api/late", "late_percent")):
+            for body in ({key: 7}, {key: "fast"}, {key: True}, [], None):
+                with self.subTest(path=path, body=body):
+                    response = self.client.post(path, json=body)
+                    self.assertEqual(response.status_code, 400)
+                    self.assertIn("error", response.json)
         self.assertEqual(self.client.post("/api/speed", data="not json").status_code, 400)
 
-    def test_speed_picker_offers_exactly_the_allowed_speeds(self):
+    def test_pickers_offer_exactly_the_allowed_values(self):
         html = (Path(app.__file__).parent / "control-panel.html").read_text()
-        options = tuple(int(value) for value in re.findall(r'<option value="(\d+)"', html))
-        self.assertEqual(options, app.SPEEDS)
+        for select, allowed in (("speed", app.SPEEDS), ("parallelism", app.PARALLELISMS), ("late", app.LATE_PERCENTS)):
+            with self.subTest(select=select):
+                options = re.search(rf'<select id="{select}".*?</select>', html, re.S).group(0)
+                self.assertEqual(tuple(int(value) for value in re.findall(r'<option value="(\d+)"', options)), allowed)
 
-    def test_speed_and_pause_are_saved_for_the_simulator(self):
+    def test_settings_are_saved_for_the_simulator(self):
         self.assertEqual(self.client.post("/api/speed", json={"speed": 1000}).json["speed"], 1000)
         self.assertEqual(self.client.post("/api/traffic", json={"paused": True}).json["paused"], True)
-        self.assertEqual(app.CONTROL_FILE.read_text(), '{"paused": true, "speed": 1000}')
+        self.assertEqual(self.client.post("/api/late", json={"late_percent": 20}).json["late_percent"], 20)
+        self.assertEqual(self.control(), {
+            "paused": True, "speed": 1000, "late_percent": 20, "burst_until": 0, "burst_factor": app.BURST_FACTOR,
+        })
         self.assertEqual(self.client.post("/api/traffic", json={"paused": "yes"}).status_code, 400)
+
+    def test_burst_needs_running_traffic_and_lasts_30_seconds(self):
+        self.assertEqual(self.client.post("/api/burst").status_code, 409)
+        app.state["running"] = True
+        with patch("app.time.time", return_value=1000.0):
+            self.client.post("/api/burst")
+            self.assertEqual(self.client.get("/api/status").json["burst_seconds_left"], 30)
+        self.assertEqual(self.control()["burst_until"], 1030.0)
 
     def test_start_returns_immediately_and_status_stays_responsive(self):
         docker_up_finished = threading.Event()
@@ -101,25 +148,50 @@ class AppTests(unittest.TestCase):
             self.assertTrue(self.client.get("/api/status").json["running"])
 
             docker_up_finished.set()
-            for _ in range(100):
-                if not app.state["starting"]:
-                    break
-                threading.Event().wait(0.01)
+            wait_for(lambda: not app.state["starting"])
         self.assertEqual(app.state["message"], "Traffic is running")
         self.assertEqual(commands, [["docker", "compose", "up"], ["docker", "compose", "exec"], ["python3", "run-sim.py"]])
+        app.results_consumer.start.assert_called_once()
+
+    def test_job_is_submitted_with_the_chosen_parallelism(self):
+        self.client.post("/api/parallelism", json={"parallelism": 2})
+        commands = self.boot()
+        self.assertIn("-i", commands[1])
+        self.assertEqual(app.SESSION_FILE.read_text(), "SET 'parallelism.default' = '2';\n")
+
+    def test_rescale_stops_with_a_savepoint_and_resubmits_from_it(self):
+        self.boot()
+        self.monitor.running_job.return_value = {"jid": "job-1"}
+        self.monitor.stop_with_savepoint.return_value = "file:/flink-data/savepoints/savepoint-1"
+        with patch("app.run_command", return_value=FakeProcess()) as run_command:
+            self.assertTrue(self.client.post("/api/parallelism", json={"parallelism": 8}).json["rescaling"])
+            wait_for(lambda: not app.state["rescaling"])
+        self.monitor.stop_with_savepoint.assert_called_once_with("job-1")
+        self.assertEqual(app.SESSION_FILE.read_text(), (
+            "SET 'parallelism.default' = '8';\n"
+            "SET 'execution.savepoint.path' = 'file:/flink-data/savepoints/savepoint-1';\n"
+        ))
+        self.assertEqual(run_command.call_count, 1)
+        self.assertEqual(app.state["message"], "Running with parallelism 8")
+
+    def test_failed_rescale_is_reported(self):
+        self.boot()
+        self.monitor.running_job.return_value = {"jid": "job-1"}
+        self.monitor.stop_with_savepoint.side_effect = TimeoutError("Savepoint did not complete")
+        self.client.post("/api/parallelism", json={"parallelism": 1})
+        wait_for(lambda: not app.state["rescaling"])
+        self.assertEqual(app.state["message"], "Rescale failed: Savepoint did not complete")
 
     def test_stop_during_boot_cancels_it(self):
         docker_up = FakeProcess(returncode=-15, wait_gate=threading.Event())
         with patch("app.run_command", return_value=docker_up) as run_command:
             self.client.post("/api/start")
-            for _ in range(100):
-                if app.compose_up is not None:
-                    break
-                threading.Event().wait(0.01)
+            wait_for(lambda: app.compose_up is not None)
             self.assertEqual(self.client.post("/api/stop").json["message"], "Stopped")
         self.assertTrue(docker_up.terminated)
         self.assertEqual(run_command.call_count, 1)
         self.assertFalse(app.state["running"])
+        app.results_consumer.stop.assert_called()
 
     def test_failed_docker_start_is_reported(self):
         with patch("app.run_command", return_value=FakeProcess(returncode=1)):
@@ -127,41 +199,11 @@ class AppTests(unittest.TestCase):
         self.assertFalse(app.state["running"])
         self.assertIn("Docker", app.state["message"])
 
-    def test_flink_summary_reports_source_rate_and_worst_subtask(self):
-        def metric(name, max_value, total=0):
-            return {"id": name, "max": max_value, "sum": total}
-
-        responses = {
-            "/jobs/overview": {"jobs": [
-                {"jid": "old", "name": "old", "state": "RUNNING", "start-time": 1},
-                {"jid": "new", "name": "clicks-per-minute", "state": "RUNNING", "start-time": 2},
-                {"jid": "done", "name": "done", "state": "FINISHED", "start-time": 3},
-            ]},
-            "/jobs/new": {"vertices": [
-                {"id": "src", "name": "Source: youtube_inbound_stream", "parallelism": 4},
-                {"id": "agg", "name": "GroupWindowAggregate", "parallelism": 4},
-            ]},
-            "/jobs/new/vertices/src/subtasks/metrics": [
-                metric("numRecordsOutPerSecond", 400, 1500.4), metric("busyTimeMsPerSecond", 250),
-                metric("backPressuredTimeMsPerSecond", float("nan")),
-            ],
-            "/jobs/new/vertices/agg/subtasks/metrics": [
-                metric("numRecordsOutPerSecond", 9, 9), metric("busyTimeMsPerSecond", 600),
-                metric("backPressuredTimeMsPerSecond", 100),
-            ],
-        }
-        with patch("app.fetch_flink", side_effect=lambda path: responses[path.split("?")[0]]):
-            summary = self.client.get("/api/flink").json
-        self.assertEqual(summary, {
-            "state": "RUNNING", "name": "clicks-per-minute", "parallelism": 4,
-            "records_per_second": 1500, "busy_percent": 60, "backpressure_percent": 10,
-        })
-
-    def test_flink_summary_without_flink(self):
-        with patch("app.fetch_flink", side_effect=OSError("connection refused")):
-            self.assertEqual(self.client.get("/api/flink").json, {"state": "UNAVAILABLE"})
-        with patch("app.fetch_flink", return_value={"jobs": []}):
-            self.assertEqual(self.client.get("/api/flink").json, {"state": "NO_JOB"})
+    def test_flink_and_top_videos_endpoints(self):
+        self.monitor.snapshot.return_value = {"state": "NO_JOB", "history": []}
+        self.assertEqual(self.client.get("/api/flink").json, {"state": "NO_JOB", "history": []})
+        with patch.object(app.top_videos, "latest", return_value={"window_start": None, "total": 0, "videos": []}):
+            self.assertEqual(self.client.get("/api/top-videos").json["videos"], [])
 
 
 if __name__ == "__main__":

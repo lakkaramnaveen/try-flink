@@ -155,3 +155,20 @@ select {
   .stop-icon { width: 28px; height: 28px; }
   .restart-icon { transform: scale(.85) rotate(90deg); }
 }
+
+/* Tuning controls */
+
+.tuning { display: flex; flex-wrap: wrap; justify-content: center; align-items: end; gap: 14px 22px; margin-top: 22px; color: var(--muted); font-size: 13px; }
+.tuning label { display: flex; flex-direction: column; gap: 5px; }
+.tuning select { width: 130px; height: 40px; padding: 0 12px; border-width: 1px; border-radius: 10px; font-size: 16px; }
+.burst { height: 40px; padding: 0 18px; border-radius: 10px; background: var(--rose); color: var(--rose-ink); font-weight: 600; }
+
+.legend .flink-line { color: #3f9a6b; }
+
+/* Top videos */
+
+.top-videos { width: min(860px, 100%); margin-top: 36px; }
+.top-videos ol { list-style: none; margin: 12px 0 0; padding: 0; }
+.top-videos li { display: grid; grid-template-columns: 90px 1fr 56px; align-items: center; gap: 12px; padding: 4px 0; font-size: 14px; font-variant-numeric: tabular-nums; }
+.top-videos .bar { height: 10px; border-radius: 5px; background: var(--blue); }
+.top-videos .count { text-align: right; color: var(--muted); }
